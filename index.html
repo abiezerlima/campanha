@@ -163,14 +163,26 @@
         let output = response.output || (response.details && response.details.output);
         if (!output && response.userMessage) output = response.userMessage;
         
-        while (typeof output === "string") {
+        if (typeof output === "object" && output !== null) {
+            return output;
+        }
+
+        if (typeof output === "string") {
             try { 
-                output = JSON.parse(output); 
+                return JSON.parse(output); 
             } catch (e) { 
-                break;
+                try {
+                    // Trata o formato Map nativo do Deluge (ex: {status=success, empresas=[{...}]})
+                    let repaired = output
+                        .replace(/([{,])\s*([a-zA-Z0-9_]+)\s*=/g, '$1"$2":')
+                        .replace(/:\s*([a-zA-Z0-9_]+)(?=[,}])/g, ':"$1"');
+                    return JSON.parse(repaired);
+                } catch(err) {
+                    console.error("Erro ao realizar parse da resposta:", err, output);
+                }
             }
         }
-        return output;
+        return null;
     }
 
     function marcarTodos(status) {
