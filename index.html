@@ -1,0 +1,283 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Criar Campanha & Disparar E-mails - Fitstock</title>
+    <script src="https://live.zwidgets.com/js-sdk/1.2/ZohoEmbededAppSDK.min.js"></script>
+    <style>
+        * { box-sizing: border-box; }
+        body {
+            margin: 0;
+            padding: 18px;
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Arial, sans-serif;
+            background: #f8fafc;
+            color: #1e293b;
+        }
+        .card {
+            background: #fff;
+            border-radius: 8px;
+            border: 1px solid #e2e8f0;
+            padding: 16px;
+            margin-bottom: 14px;
+        }
+        .card h3 { margin: 0 0 12px 0; font-size: 15px; color: #0f172a; border-bottom: 1px solid #f1f5f9; padding-bottom: 8px; }
+        .form-group { margin-bottom: 12px; }
+        label { display: block; font-size: 12px; font-weight: 600; margin-bottom: 4px; color: #475569; }
+        input, select, textarea {
+            width: 100%;
+            padding: 8px 10px;
+            border-radius: 6px;
+            border: 1px solid #cbd5e1;
+            font-size: 13px;
+            background: #fff;
+        }
+        .row { display: flex; gap: 10px; }
+        .row .form-group { flex: 1; }
+        .membros-list {
+            max-height: 180px;
+            overflow-y: auto;
+            border: 1px solid #e2e8f0;
+            border-radius: 6px;
+            padding: 8px;
+            background: #fafafa;
+        }
+        .membro-item {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            padding: 6px;
+            border-bottom: 1px solid #f1f5f9;
+            font-size: 12px;
+        }
+        .membro-item:last-child { border-bottom: none; }
+        .btn-submit {
+            width: 100%;
+            background: #059669;
+            color: #ffffff;
+            border: none;
+            padding: 12px;
+            border-radius: 6px;
+            font-size: 14px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: background 0.2s;
+        }
+        .btn-submit:hover { background: #047857; }
+        .status { margin-top: 12px; font-size: 13px; padding: 10px; border-radius: 6px; display: none; }
+        .status.loading { display: block; background: #eff6ff; color: #1e40af; border: 1px solid #bfdbfe; }
+        .status.success { display: block; background: #ecfdf5; color: #065f46; border: 1px solid #a7f3d0; }
+        .status.error { display: block; background: #fef2f2; color: #991b1b; border: 1px solid #fecaca; }
+    </style>
+</head>
+<body>
+
+<div class="card">
+    <h3>1. Dados da Campanha</h3>
+    <div class="form-group">
+        <label for="nomeCampanha">Nome da Campanha *</label>
+        <input type="text" id="nomeCampanha" placeholder="Ex: Prospecção de Mercado - Produto X">
+    </div>
+    <div class="row">
+        <div class="form-group">
+            <label for="tipoCampanha">Tipo *</label>
+            <select id="tipoCampanha">
+                <option value="Email">Email</option>
+                <option value="Telemarketing">Telemarketing</option>
+                <option value="Webinar">Webinar</option>
+                <option value="Outro">Outro</option>
+            </select>
+        </div>
+        <div class="form-group">
+            <label for="statusCampanha">Status *</label>
+            <select id="statusCampanha">
+                <option value="Em andamento">Em andamento</option>
+                <option value="Planejada">Planejada</option>
+                <option value="Concluída">Concluída</option>
+            </select>
+        </div>
+    </div>
+</div>
+
+<div class="card">
+    <h3>2. Destinatários (Empresas e Contatos com E-mail)</h3>
+    <div id="membrosContainer" class="membros-list">
+        <div style="font-size: 12px; color: #64748b;">Carregando empresas da oportunidade...</div>
+    </div>
+</div>
+
+<div class="card">
+    <h3>3. E-mail da Campanha (Editável)</h3>
+    <div class="form-group">
+        <label for="assuntoInput">Assunto do E-mail</label>
+        <input type="text" id="assuntoInput">
+    </div>
+    <div class="form-group">
+        <label for="corpoInput">Mensagem (Suporta HTML)</label>
+        <textarea id="corpoInput" rows="9"></textarea>
+    </div>
+</div>
+
+<button class="btn-submit" onclick="executarCampanha()">Criar Campanha e Disparar E-mails</button>
+<div id="status" class="status"></div>
+
+<script>
+    const FUNCTION_API_NAME = "dispararcampanhawidget";
+    let currentOppId = null;
+    let contextData = null;
+
+    function setStatus(msg, type) {
+        const s = document.getElementById("status");
+        if (!type) { s.style.display = "none"; return; }
+        s.textContent = msg;
+        s.className = "status " + type;
+    }
+
+    function parseZohoOutput(response) {
+        let output = response.output || (response.details && response.details.output);
+        while (typeof output === "string") {
+            try { output = JSON.parse(output); } catch (e) { break; }
+        }
+        return output;
+    }
+
+    async function carregarDados() {
+        setStatus("Carregando dados para campanha...", "loading");
+        const reqData = { arguments: JSON.stringify({ oppId: currentOppId }) };
+
+        try {
+            const response = await ZOHO.CRM.FUNCTIONS.execute(FUNCTION_API_NAME, reqData);
+            const output = parseZohoOutput(response);
+
+            if (output && Array.isArray(output.empresas)) {
+                contextData = output;
+
+                // Definir Nome padrão da Campanha e Template
+                const pNome = output.produto_nome || "Produto";
+                const qtd = output.quantidade || "Consulte-nos";
+
+                document.getElementById("nomeCampanha").value = `Campanha Fitstock - ${pNome}`;
+                document.getElementById("assuntoInput").value = `Oportunidade Comercial: ${pNome} disponível na Fitstock`;
+
+                // Montar Template Editável
+                const templateHtml = `Olá {{Nome_Contato}}, tudo bem?\n\nIdentificamos uma oportunidade exclusiva para a {{Nome_Empresa}} referente ao item ${pNome}.\n\nTemos um lote disponível com as seguintes condições de mercado:\n- Produto: ${pNome}\n- Quantidade Disponível: ${qtd}\n\nCaso tenham demanda para este produto ou queiram alinhar condições, entrem em contato diretamente com o nosso time comercial:\n\n📲 André Grell: https://wa.me/5511993122497?text=Olá%20André,%20tenho%20interesse%20no%20produto%20${encodeURIComponent(pNome)}\n📲 Natália: https://wa.me/5511911235550?text=Olá%20Natália,%20tenho%20interesse%20no%20produto%20${encodeURIComponent(pNome)}\n\nFicamos no aguardo!\n\nAtenciosamente,\nEquipe Fitstock`;
+
+                document.getElementById("corpoInput").value = templateHtml;
+
+                // Renderizar Lista de Destinatários
+                const container = document.getElementById("membrosContainer");
+                let htmlMembros = "";
+
+                output.empresas.forEach(emp => {
+                    emp.contatos.forEach(ct => {
+                        htmlMembros += `
+                            <div class="membro-item">
+                                <label style="margin:0; font-weight:normal; cursor:pointer;">
+                                    <input type="checkbox" class="chk-membro" checked
+                                        data-empresa-id="${emp.id}"
+                                        data-empresa-nome="${emp.nome}"
+                                        data-contato-id="${ct.id}"
+                                        data-contato-nome="${ct.nome}"
+                                        data-email="${ct.email}">
+                                    <strong>${emp.nome}</strong> - ${ct.nome} (${ct.email})
+                                </label>
+                            </div>
+                        `;
+                    });
+                });
+
+                if (!htmlMembros) {
+                    container.innerHTML = "<div style='font-size:12px; color:#ef4444;'>Nenhum contato com e-mail cadastrado nas empresas do subformulário.</div>";
+                } else {
+                    container.innerHTML = htmlMembros;
+                }
+
+                setStatus("", "");
+            }
+        } catch (e) {
+            setStatus("Erro ao carregar empresas.", "error");
+        }
+    }
+
+    async function executarCampanha() {
+        const nomeCamp = document.getElementById("nomeCampanha").value;
+        const tipoCamp = document.getElementById("tipoCampanha").value;
+        const statusCamp = document.getElementById("statusCampanha").value;
+        const assunto = document.getElementById("assuntoInput").value;
+        const corpo = document.getElementById("corpoInput").value.replace(/\n/g, "<br>");
+
+        const checkboxes = document.querySelectorAll(".chk-membro:checked");
+        if (checkboxes.length === 0) {
+            alert("Selecione pelo menos um contato para disparar a campanha.");
+            return;
+        }
+
+        const membros = [];
+        checkboxes.forEach(chk => {
+            membros.push({
+                empresa_id: chk.getAttribute("data-empresa-id"),
+                nome_empresa: chk.getAttribute("data-empresa-nome"),
+                contato_id: chk.getAttribute("data-contato-id"),
+                nome_contato: chk.getAttribute("data-contato-nome"),
+                email: chk.getAttribute("data-email")
+            });
+        });
+
+        setStatus("Criando campanha e disparando e-mails...", "loading");
+
+        const payload = {
+            nome_campanha: nomeCamp,
+            tipo_campanha: tipoCamp,
+            status_campanha: statusCamp,
+            assunto_email: assunto,
+            corpo_email: corpo,
+            membros: membros
+        };
+
+        const reqData = {
+            arguments: JSON.stringify({ action: "executar_campanha", payload: payload, oppId: currentOppId })
+        };
+
+        try {
+            const response = await ZOHO.CRM.FUNCTIONS.execute(FUNCTION_API_NAME, reqData);
+            const output = parseZohoOutput(response);
+
+            if (output && output.status === "success") {
+                setStatus(`Campanha criada com sucesso! ${output.total_disparados} e-mails enviados.`, "success");
+                setTimeout(() => {
+                    ZOHO.CRM.UI.Record.open({ Entity: "Campaigns", RecordID: output.campanha_id });
+                }, 1500);
+            } else {
+                setStatus("Erro ao executar campanha.", "error");
+            }
+        } catch (e) {
+            setStatus("Falha de comunicação com o backend.", "error");
+        }
+    }
+
+    function registrarZoho() {
+        if (typeof ZOHO === "undefined") {
+            setTimeout(registrarZoho, 200);
+            return;
+        }
+
+        ZOHO.embeddedApp.on("PageLoad", function(data) {
+            if (data) {
+                if (data.EntityId) {
+                    currentOppId = Array.isArray(data.EntityId) ? data.EntityId[0] : data.EntityId;
+                } else if (data.EntityIdList && data.EntityIdList.length > 0) {
+                    currentOppId = data.EntityIdList[0];
+                } else if (data.recordId) {
+                    currentOppId = data.recordId;
+                }
+            }
+            if (currentOppId) carregarDados();
+        });
+
+        ZOHO.embeddedApp.init();
+    }
+
+    registrarZoho();
+</script>
+</body>
+</html>
