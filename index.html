@@ -15,6 +15,28 @@
             background: #f8fafc;
             color: #1e293b;
         }
+        
+        /* TELA DE DEBUG EM DESTAQUE NO TOPO */
+        .debug-panel {
+            margin-bottom: 14px;
+            background: #0f172a;
+            color: #38bdf8;
+            padding: 10px 12px;
+            border-radius: 6px;
+            font-family: monospace;
+            font-size: 11px;
+            max-height: 180px;
+            overflow-y: auto;
+            border: 2px solid #0284c7;
+        }
+        .debug-title {
+            color: #f1f5f9;
+            font-weight: bold;
+            margin-bottom: 4px;
+            border-bottom: 1px solid #334155;
+            padding-bottom: 4px;
+        }
+
         .card {
             background: #fff;
             border-radius: 8px;
@@ -88,30 +110,15 @@
         .status.loading { display: block; background: #eff6ff; color: #1e40af; border: 1px solid #bfdbfe; }
         .status.success { display: block; background: #ecfdf5; color: #065f46; border: 1px solid #a7f3d0; }
         .status.error { display: block; background: #fef2f2; color: #991b1b; border: 1px solid #fecaca; }
-
-        /* TELA DE DEBUG EM TEMPO REAL */
-        .debug-panel {
-            margin-top: 14px;
-            background: #0f172a;
-            color: #38bdf8;
-            padding: 12px;
-            border-radius: 6px;
-            font-family: monospace;
-            font-size: 11px;
-            max-height: 200px;
-            overflow-y: auto;
-            border: 1px solid #1e293b;
-        }
-        .debug-title {
-            color: #f1f5f9;
-            font-weight: bold;
-            margin-bottom: 6px;
-            border-bottom: 1px solid #334155;
-            padding-bottom: 4px;
-        }
     </style>
 </head>
 <body>
+
+<!-- CONSOLE DE DEBUG FIXADO NO TOPO -->
+<div class="debug-panel">
+    <div class="debug-title">🔍 CONSOLE DE MONITORAMENTO REAL-TIME (FITSTOCK)</div>
+    <div id="debugLog">Aguardando inicialização da Widget SDK...</div>
+</div>
 
 <div class="card">
     <h3>1. Dados da Campanha</h3>
@@ -161,18 +168,12 @@
     </div>
     <div class="form-group">
         <label for="corpoInput">Mensagem (Com Variáveis {{Nome_Contato}} e {{Nome_Empresa}})</label>
-        <textarea id="corpoInput" rows="6" placeholder="Carregando..."></textarea>
+        <textarea id="corpoInput" rows="5" placeholder="Carregando..."></textarea>
     </div>
 </div>
 
 <button class="btn-submit" onclick="executarCampanha()">Criar Campanha e Disparar E-mails</button>
 <div id="status" class="status"></div>
-
-<!-- PAINEL DE DEBUG INTEGRADO -->
-<div class="debug-panel">
-    <div class="debug-title">🔍 PAINEL DE DEBUG DE RESPOSTA</div>
-    <div id="debugLog">Aguardando execução da função Deluge...</div>
-</div>
 
 <script>
     const FUNCTION_API_NAME = "dispararcampanhawidget";
@@ -181,7 +182,7 @@
     function logDebug(title, data) {
         const d = document.getElementById("debugLog");
         const strData = (typeof data === "object") ? JSON.stringify(data, null, 2) : String(data);
-        d.innerHTML += `<br><br><strong>[${new Date().toLocaleTimeString()}] ${title}:</strong><br><pre style="margin:4px 0; color:#a5f3fc;">${strData}</pre>`;
+        d.innerHTML += `<br><strong>[${new Date().toLocaleTimeString()}] ${title}:</strong> <span style="color:#a5f3fc;">${strData}</span>`;
         d.scrollTop = d.scrollHeight;
     }
 
@@ -196,67 +197,47 @@
         document.querySelectorAll(".chk-membro").forEach(chk => chk.checked = status);
     }
 
+    function parseStrictJson(response) {
+        if (!response) return null;
+        let rawStr = "";
+
+        if (typeof response === "string") rawStr = response;
+        else if (response.details && response.details.output) rawStr = response.details.output;
+        else if (response.output) rawStr = response.output;
+        else if (response.userMessage) rawStr = response.userMessage;
+
+        logDebug("RAW OUTPUT", rawStr);
+
+        if (typeof rawStr === "object" && rawStr !== null) return rawStr;
+
+        if (typeof rawStr === "string") {
+            try {
+                return JSON.parse(rawStr);
+            } catch(e) {
+                logDebug("ERRO PARSE JSON", e.message);
+            }
+        }
+        return null;
+    }
+
     async function carregarDados() {
         if (!currentOppId) {
             setStatus("ID da Oportunidade não identificado.", "error");
-            logDebug("ERRO CRÍTICO", "currentOppId veio nulo/vazio.");
+            logDebug("ERRO CRÍTICO", "oppId veio vazio.");
             return;
         }
 
         setStatus("Carregando empresas e produto...", "loading");
-        logDebug("INICIANDO EXECUÇÃO", { oppId: currentOppId, function: FUNCTION_API_NAME });
+        logDebug("CHAMANDO DELUGE", { oppId: currentOppId });
 
         const reqData = { arguments: JSON.stringify({ oppId: currentOppId }) };
 
         try {
             const response = await ZOHO.CRM.FUNCTIONS.execute(FUNCTION_API_NAME, reqData);
-            logDebug("RESPOSTA BRUTA ZOHO.CRM.FUNCTIONS", response);
+            logDebug("RESPOSTA BRUTA SDK", response);
 
-            // Processamento e tentativa de extração
-            let output = null;
-            if (response && response.details && response.details.output) {
-                output = response.details.output;
-            } else if (response && response.output) {
-                output = response.output;
-            } else if (response && response.userMessage) {
-                output = response.userMessage;
-            } else {
-                output = response;
-            }
-
-            logDebug("OUTPUT EXTRAÍDO", output);
-
-            let dataObj = null;
-
-            // Tentativa 1: Parse direto caso já venha como JSON ou se for uma string JSON válida
-            if (typeof output === "object" && output !== null) {
-                dataObj = output;
-            } else if (typeof output === "string") {
-                try {
-                    dataObj = JSON.parse(output);
-                } catch(e) {
-                    logDebug("FALHA PARSE DIRECT JSON", e.message);
-                }
-
-                // Tentativa 2: Extração Base64 se a chave b64 estiver na string
-                if (!dataObj && output.includes("b64")) {
-                    try {
-                        let b64Str = "";
-                        const match = output.match(/b64["']?\s*:\s*["']([^"']+)["']/);
-                        if (match) b64Str = match[1];
-                        
-                        if (b64Str) {
-                            const decoded = decodeURIComponent(escape(atob(b64Str)));
-                            logDebug("TEXTO BASE64 DECODIFICADO", decoded);
-                            dataObj = JSON.parse(decoded);
-                        }
-                    } catch(b64Err) {
-                        logDebug("FALHA PARSE BASE64", b64Err.message);
-                    }
-                }
-            }
-
-            logDebug("OBJETO FINAL PROCESSADO", dataObj);
+            const dataObj = parseStrictJson(response);
+            logDebug("OBJETO PARSADO", dataObj);
 
             if (dataObj && Array.isArray(dataObj.empresas)) {
                 const pNome = dataObj.produto_nome || "Produto";
@@ -301,11 +282,11 @@
                 setStatus("", "");
             } else {
                 setStatus("Falha ao retornar lista de destinatários.", "error");
-                logDebug("MOTIVO DA FALHA", "dataObj veio nulo ou dataObj.empresas não é um Array válido.");
+                logDebug("MOTIVO FALHA", "empresas não é um Array ou veio vazio.");
             }
         } catch (e) {
             setStatus("Erro de comunicação com o servidor.", "error");
-            logDebug("EXCEÇÃO JAVASCRIPT", e.stack || e.message);
+            logDebug("EXCEÇÃO JS", e.stack || e.message);
         }
     }
 
@@ -350,12 +331,20 @@
 
         try {
             const response = await ZOHO.CRM.FUNCTIONS.execute(FUNCTION_API_NAME, reqData);
-            logDebug("RESPOSTA EXECUÇÃO CAMPANHA", response);
+            logDebug("EXECUÇÃO RESPOSTA", response);
 
-            setStatus("Campanha enviada! Verifique o log de debug abaixo.", "success");
+            const outExec = parseStrictJson(response);
+            if (outExec && outExec.status === "success") {
+                setStatus(`Campanha criada com sucesso! ${outExec.total_disparados} e-mails enviados. Redirecionando...`, "success");
+                setTimeout(() => {
+                    ZOHO.CRM.UI.Record.open({ Entity: "Campaigns", RecordID: outExec.campanha_id });
+                }, 1500);
+            } else {
+                setStatus("Erro ao executar campanha.", "error");
+            }
         } catch (e) {
             setStatus("Falha de comunicação com o backend.", "error");
-            logDebug("ERRO EXECUÇÃO CAMPANHA", e.message);
+            logDebug("ERRO EXECUÇÃO", e.message);
         }
     }
 
@@ -366,20 +355,20 @@
         }
 
         ZOHO.embeddedApp.on("PageLoad", function(data) {
-            logDebug("EVENTO PAGELOAD DISPARADO", data);
+            logDebug("PAGELOAD DATA", data);
             extrairEProcessarID(data);
         });
 
         ZOHO.embeddedApp.init().then(function() {
-            logDebug("ZOHO.embeddedApp.init() CONCLUÍDO", "OK");
+            logDebug("SDK INIT OK", "Iniciado");
             if (!currentOppId) {
                 ZOHO.CRM.INTERACTOR.getRecord().then(function(dataRecord) {
-                    logDebug("INTERACTOR.getRecord() RETORNOU", dataRecord);
+                    logDebug("INTERACTOR RECORD", dataRecord);
                     if (dataRecord && dataRecord.recordId) {
                         extrairEProcessarID({ EntityId: dataRecord.recordId });
                     }
                 }).catch(function(err){
-                    logDebug("INTERACTOR.getRecord() FALHOU", err);
+                    logDebug("INTERACTOR ERR", err);
                 });
             }
         });
@@ -398,7 +387,7 @@
             }
         }
 
-        logDebug("ID EXTRAÍDO FINAL", currentOppId);
+        logDebug("OPP ID DEFINIDO", currentOppId);
 
         if (currentOppId) {
             carregarDados();
