@@ -88,6 +88,27 @@
         .status.loading { display: block; background: #eff6ff; color: #1e40af; border: 1px solid #bfdbfe; }
         .status.success { display: block; background: #ecfdf5; color: #065f46; border: 1px solid #a7f3d0; }
         .status.error { display: block; background: #fef2f2; color: #991b1b; border: 1px solid #fecaca; }
+
+        /* TELA DE DEBUG EM TEMPO REAL */
+        .debug-panel {
+            margin-top: 14px;
+            background: #0f172a;
+            color: #38bdf8;
+            padding: 12px;
+            border-radius: 6px;
+            font-family: monospace;
+            font-size: 11px;
+            max-height: 200px;
+            overflow-y: auto;
+            border: 1px solid #1e293b;
+        }
+        .debug-title {
+            color: #f1f5f9;
+            font-weight: bold;
+            margin-bottom: 6px;
+            border-bottom: 1px solid #334155;
+            padding-bottom: 4px;
+        }
     </style>
 </head>
 <body>
@@ -140,53 +161,35 @@
     </div>
     <div class="form-group">
         <label for="corpoInput">Mensagem (Com Variáveis {{Nome_Contato}} e {{Nome_Empresa}})</label>
-        <textarea id="corpoInput" rows="8" placeholder="Carregando..."></textarea>
+        <textarea id="corpoInput" rows="6" placeholder="Carregando..."></textarea>
     </div>
 </div>
 
 <button class="btn-submit" onclick="executarCampanha()">Criar Campanha e Disparar E-mails</button>
 <div id="status" class="status"></div>
 
+<!-- PAINEL DE DEBUG INTEGRADO -->
+<div class="debug-panel">
+    <div class="debug-title">🔍 PAINEL DE DEBUG DE RESPOSTA</div>
+    <div id="debugLog">Aguardando execução da função Deluge...</div>
+</div>
+
 <script>
     const FUNCTION_API_NAME = "dispararcampanhawidget";
     let currentOppId = null;
+
+    function logDebug(title, data) {
+        const d = document.getElementById("debugLog");
+        const strData = (typeof data === "object") ? JSON.stringify(data, null, 2) : String(data);
+        d.innerHTML += `<br><br><strong>[${new Date().toLocaleTimeString()}] ${title}:</strong><br><pre style="margin:4px 0; color:#a5f3fc;">${strData}</pre>`;
+        d.scrollTop = d.scrollHeight;
+    }
 
     function setStatus(msg, type) {
         const s = document.getElementById("status");
         if (!type) { s.style.display = "none"; return; }
         s.textContent = msg;
         s.className = "status " + type;
-    }
-
-    function parseZohoBase64Response(response) {
-        try {
-            let rawStr = "";
-            if (typeof response === "string") rawStr = response;
-            else if (response.output) rawStr = response.output;
-            else if (response.details && response.details.output) rawStr = response.details.output;
-            else if (response.userMessage) rawStr = response.userMessage;
-
-            // Se for um wrapper JSON contendo {b64: "..."}
-            let objWrapper = null;
-            try { objWrapper = JSON.parse(rawStr); } catch(e) {}
-
-            let b64Str = "";
-            if (objWrapper && objWrapper.b64) {
-                b64Str = objWrapper.b64;
-            } else if (typeof rawStr === "string" && rawStr.includes("b64")) {
-                const match = rawStr.match(/b64["']?\s*:\s*["']([^"']+)["']/);
-                if (match) b64Str = match[1];
-            }
-
-            if (b64Str) {
-                // Decodifica UTF-8 via Base64
-                const decodedJson = decodeURIComponent(escape(atob(b64Str)));
-                return JSON.parse(decodedJson);
-            }
-        } catch(e) {
-            console.error("Erro ao decodificar Base64:", e);
-        }
-        return null;
     }
 
     function marcarTodos(status) {
@@ -196,19 +199,68 @@
     async function carregarDados() {
         if (!currentOppId) {
             setStatus("ID da Oportunidade não identificado.", "error");
+            logDebug("ERRO CRÍTICO", "currentOppId veio nulo/vazio.");
             return;
         }
 
         setStatus("Carregando empresas e produto...", "loading");
+        logDebug("INICIANDO EXECUÇÃO", { oppId: currentOppId, function: FUNCTION_API_NAME });
+
         const reqData = { arguments: JSON.stringify({ oppId: currentOppId }) };
 
         try {
             const response = await ZOHO.CRM.FUNCTIONS.execute(FUNCTION_API_NAME, reqData);
-            const output = parseZohoBase64Response(response);
+            logDebug("RESPOSTA BRUTA ZOHO.CRM.FUNCTIONS", response);
 
-            if (output && Array.isArray(output.empresas)) {
-                const pNome = output.produto_nome || "Produto";
-                const qtd = output.quantidade || "Consulte-nos";
+            // Processamento e tentativa de extração
+            let output = null;
+            if (response && response.details && response.details.output) {
+                output = response.details.output;
+            } else if (response && response.output) {
+                output = response.output;
+            } else if (response && response.userMessage) {
+                output = response.userMessage;
+            } else {
+                output = response;
+            }
+
+            logDebug("OUTPUT EXTRAÍDO", output);
+
+            let dataObj = null;
+
+            // Tentativa 1: Parse direto caso já venha como JSON ou se for uma string JSON válida
+            if (typeof output === "object" && output !== null) {
+                dataObj = output;
+            } else if (typeof output === "string") {
+                try {
+                    dataObj = JSON.parse(output);
+                } catch(e) {
+                    logDebug("FALHA PARSE DIRECT JSON", e.message);
+                }
+
+                // Tentativa 2: Extração Base64 se a chave b64 estiver na string
+                if (!dataObj && output.includes("b64")) {
+                    try {
+                        let b64Str = "";
+                        const match = output.match(/b64["']?\s*:\s*["']([^"']+)["']/);
+                        if (match) b64Str = match[1];
+                        
+                        if (b64Str) {
+                            const decoded = decodeURIComponent(escape(atob(b64Str)));
+                            logDebug("TEXTO BASE64 DECODIFICADO", decoded);
+                            dataObj = JSON.parse(decoded);
+                        }
+                    } catch(b64Err) {
+                        logDebug("FALHA PARSE BASE64", b64Err.message);
+                    }
+                }
+            }
+
+            logDebug("OBJETO FINAL PROCESSADO", dataObj);
+
+            if (dataObj && Array.isArray(dataObj.empresas)) {
+                const pNome = dataObj.produto_nome || "Produto";
+                const qtd = dataObj.quantidade || "Consulte-nos";
 
                 document.getElementById("nomeCampanha").value = `Campanha Fitstock - ${pNome}`;
                 document.getElementById("assuntoInput").value = `Oportunidade Comercial: ${pNome} disponível na Fitstock`;
@@ -220,7 +272,7 @@
                 const container = document.getElementById("membrosContainer");
                 let htmlMembros = "";
 
-                output.empresas.forEach(emp => {
+                dataObj.empresas.forEach(emp => {
                     if (emp.contatos && emp.contatos.length > 0) {
                         emp.contatos.forEach(ct => {
                             htmlMembros += `
@@ -248,10 +300,12 @@
 
                 setStatus("", "");
             } else {
-                setStatus("Falha ao carregar lista de destinatários. Verifique os contatos cadastrados.", "error");
+                setStatus("Falha ao retornar lista de destinatários.", "error");
+                logDebug("MOTIVO DA FALHA", "dataObj veio nulo ou dataObj.empresas não é um Array válido.");
             }
         } catch (e) {
             setStatus("Erro de comunicação com o servidor.", "error");
+            logDebug("EXCEÇÃO JAVASCRIPT", e.stack || e.message);
         }
     }
 
@@ -296,18 +350,12 @@
 
         try {
             const response = await ZOHO.CRM.FUNCTIONS.execute(FUNCTION_API_NAME, reqData);
-            const output = parseZohoBase64Response(response);
+            logDebug("RESPOSTA EXECUÇÃO CAMPANHA", response);
 
-            if (output && output.status === "success") {
-                setStatus(`Campanha criada com sucesso! ${output.total_disparados} e-mails enviados. Redirecionando...`, "success");
-                setTimeout(() => {
-                    ZOHO.CRM.UI.Record.open({ Entity: "Campaigns", RecordID: output.campanha_id });
-                }, 1500);
-            } else {
-                setStatus("Erro ao executar campanha.", "error");
-            }
+            setStatus("Campanha enviada! Verifique o log de debug abaixo.", "success");
         } catch (e) {
             setStatus("Falha de comunicação com o backend.", "error");
+            logDebug("ERRO EXECUÇÃO CAMPANHA", e.message);
         }
     }
 
@@ -318,16 +366,21 @@
         }
 
         ZOHO.embeddedApp.on("PageLoad", function(data) {
+            logDebug("EVENTO PAGELOAD DISPARADO", data);
             extrairEProcessarID(data);
         });
 
         ZOHO.embeddedApp.init().then(function() {
+            logDebug("ZOHO.embeddedApp.init() CONCLUÍDO", "OK");
             if (!currentOppId) {
                 ZOHO.CRM.INTERACTOR.getRecord().then(function(dataRecord) {
+                    logDebug("INTERACTOR.getRecord() RETORNOU", dataRecord);
                     if (dataRecord && dataRecord.recordId) {
                         extrairEProcessarID({ EntityId: dataRecord.recordId });
                     }
-                }).catch(function(){});
+                }).catch(function(err){
+                    logDebug("INTERACTOR.getRecord() FALHOU", err);
+                });
             }
         });
     }
@@ -344,6 +397,8 @@
                 currentOppId = data.recordId;
             }
         }
+
+        logDebug("ID EXTRAÍDO FINAL", currentOppId);
 
         if (currentOppId) {
             carregarDados();
