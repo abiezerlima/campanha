@@ -167,12 +167,7 @@
             try { 
                 output = JSON.parse(output); 
             } catch (e) { 
-                try {
-                    const repaired = output.replace(/([a-zA-Z0-9_]+)=/g, '"$1":');
-                    output = JSON.parse(repaired);
-                } catch(err) {
-                    break; 
-                }
+                break;
             }
         }
         return output;
@@ -308,12 +303,10 @@
             return;
         }
 
-        // Método 1: Evento PageLoad NATIVO SDK
         ZOHO.embeddedApp.on("PageLoad", function(data) {
             extrairEProcessarID(data);
         });
 
-        // Método 2: Fallback direto via API UI (garante carregamento se o evento falhar)
         ZOHO.embeddedApp.init().then(function() {
             if (!currentOppId) {
                 ZOHO.CRM.INTERACTOR.getRecord().then(function(dataRecord) {
@@ -326,7 +319,7 @@
     }
 
     function extrairEProcessarID(data) {
-        if (currentOppId) return; // Evita dupla chamada
+        if (currentOppId) return;
 
         if (data) {
             if (data.EntityId) {
