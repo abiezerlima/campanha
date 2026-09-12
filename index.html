@@ -150,7 +150,6 @@
 <script>
     const FUNCTION_API_NAME = "dispararcampanhawidget";
     let currentOppId = null;
-    let contextData = null;
 
     function setStatus(msg, type) {
         const s = document.getElementById("status");
@@ -159,28 +158,33 @@
         s.className = "status " + type;
     }
 
-    function parseZohoOutput(response) {
-        let output = response.output || (response.details && response.details.output);
-        if (!output && response.userMessage) output = response.userMessage;
-        
-        if (typeof output === "object" && output !== null) {
-            return output;
-        }
+    function parseZohoBase64Response(response) {
+        try {
+            let rawStr = "";
+            if (typeof response === "string") rawStr = response;
+            else if (response.output) rawStr = response.output;
+            else if (response.details && response.details.output) rawStr = response.details.output;
+            else if (response.userMessage) rawStr = response.userMessage;
 
-        if (typeof output === "string") {
-            try { 
-                return JSON.parse(output); 
-            } catch (e) { 
-                try {
-                    // Trata o formato Map nativo do Deluge (ex: {status=success, empresas=[{...}]})
-                    let repaired = output
-                        .replace(/([{,])\s*([a-zA-Z0-9_]+)\s*=/g, '$1"$2":')
-                        .replace(/:\s*([a-zA-Z0-9_]+)(?=[,}])/g, ':"$1"');
-                    return JSON.parse(repaired);
-                } catch(err) {
-                    console.error("Erro ao realizar parse da resposta:", err, output);
-                }
+            // Se for um wrapper JSON contendo {b64: "..."}
+            let objWrapper = null;
+            try { objWrapper = JSON.parse(rawStr); } catch(e) {}
+
+            let b64Str = "";
+            if (objWrapper && objWrapper.b64) {
+                b64Str = objWrapper.b64;
+            } else if (typeof rawStr === "string" && rawStr.includes("b64")) {
+                const match = rawStr.match(/b64["']?\s*:\s*["']([^"']+)["']/);
+                if (match) b64Str = match[1];
             }
+
+            if (b64Str) {
+                // Decodifica UTF-8 via Base64
+                const decodedJson = decodeURIComponent(escape(atob(b64Str)));
+                return JSON.parse(decodedJson);
+            }
+        } catch(e) {
+            console.error("Erro ao decodificar Base64:", e);
         }
         return null;
     }
@@ -200,11 +204,9 @@
 
         try {
             const response = await ZOHO.CRM.FUNCTIONS.execute(FUNCTION_API_NAME, reqData);
-            const output = parseZohoOutput(response);
+            const output = parseZohoBase64Response(response);
 
             if (output && Array.isArray(output.empresas)) {
-                contextData = output;
-
                 const pNome = output.produto_nome || "Produto";
                 const qtd = output.quantidade || "Consulte-nos";
 
@@ -246,7 +248,7 @@
 
                 setStatus("", "");
             } else {
-                setStatus("Falha ao retornar lista de destinatários.", "error");
+                setStatus("Falha ao carregar lista de destinatários. Verifique os contatos cadastrados.", "error");
             }
         } catch (e) {
             setStatus("Erro de comunicação com o servidor.", "error");
@@ -294,7 +296,7 @@
 
         try {
             const response = await ZOHO.CRM.FUNCTIONS.execute(FUNCTION_API_NAME, reqData);
-            const output = parseZohoOutput(response);
+            const output = parseZohoBase64Response(response);
 
             if (output && output.status === "success") {
                 setStatus(`Campanha criada com sucesso! ${output.total_disparados} e-mails enviados. Redirecionando...`, "success");
