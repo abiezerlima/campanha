@@ -161,8 +161,21 @@
 
     function parseZohoOutput(response) {
         let output = response.output || (response.details && response.details.output);
+        if (!output && response.userMessage) output = response.userMessage;
+        
+        // Loop seguro para desembrulhar JSON serializado do Deluge
         while (typeof output === "string") {
-            try { output = JSON.parse(output); } catch (e) { break; }
+            try { 
+                output = JSON.parse(output); 
+            } catch (e) { 
+                // Tenta reparar chaves de Map não formatadas como JSON estrito
+                try {
+                    const repaired = output.replace(/([a-zA-Z0-9_]+)=/g, '"$1":');
+                    output = JSON.parse(repaired);
+                } catch(err) {
+                    break; 
+                }
+            }
         }
         return output;
     }
@@ -300,7 +313,6 @@
         }
 
         ZOHO.embeddedApp.on("PageLoad", function(data) {
-            // Mapeamento universal do ID da Oportunidade
             if (data) {
                 if (data.EntityId) {
                     currentOppId = Array.isArray(data.EntityId) ? data.EntityId[0] : data.EntityId;
